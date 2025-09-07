@@ -36,6 +36,23 @@
             border-radius: 0.5rem;
             border: 1px solid #e5e7eb;
         }
+        .legend {
+            padding: 6px 8px;
+            font: 14px Arial, Helvetica, sans-serif;
+            background: white;
+            background: rgba(255,255,255,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            line-height: 18px;
+            color: #555;
+        }
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.9;
+        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen p-4">
@@ -43,6 +60,7 @@
         <div class="text-center mb-6">
             <h1 class="text-2xl md:text-3xl font-bold text-gray-900">Verificador de Área Ambiental</h1>
             <p class="text-gray-600 mt-2">Verifique se as suas coordenadas estão numa área ambiental carregada.</p>
+            <p id="fileName" class="text-sm text-gray-500 mt-2"></p>
         </div>
 
         <div id="loading-section" class="text-center py-8">
@@ -87,7 +105,8 @@
         let environmentalGeoJson = null;
         let map = null;
         let userMarker = null;
-        let areaLayerGroup = null;
+        let areaLayerGroup = null; // Para a área destacada na verificação
+        let allAreasLayer = null; // Para todas as áreas ambientais
 
         // URL do arquivo KMZ atualizado
         const environmentalKmzUrl = `https://raw.githubusercontent.com/brenderrangel/kmz/main/UCs_VIGENTE_(VERSAO 25.1).kmz?v=${new Date().getTime()}`;
@@ -101,6 +120,7 @@
         const getLocationBtn = document.getElementById('getLocationBtn');
         const checkBtn = document.getElementById('checkBtn');
         const resultDiv = document.getElementById('result');
+        const fileNameEl = document.getElementById('fileName');
 
         // Funções de verificação de polígono
         function isPointInRing(point, ring) {
@@ -156,12 +176,63 @@
             return toGeoJSON.kml(xmlDoc);
         }
         
+        function getStyleByOrgan(feature) {
+            const desc = feature.properties.description || '';
+            let color = "#95a5a6"; // Cinza (padrão)
+
+            if (desc.includes('UC FEDERAL')) {
+                color = "#3498db"; // Azul
+            } else if (desc.includes('UC ESTADUAL')) {
+                color = "#2ecc71"; // Verde
+            } else if (desc.includes('UC MUNICIPAL')) {
+                color = "#f1c40f"; // Amarelo
+            }
+            
+            return {
+                color: color,
+                weight: 2,
+                opacity: 0.65,
+                fillOpacity: 0.1
+            };
+        }
+
         async function loadAllData() {
             try {
                 environmentalGeoJson = await processKmz(environmentalKmzUrl);
+                
+                const fileName = environmentalKmzUrl.split('/').pop().split('?')[0];
+                fileNameEl.textContent = `Arquivo carregado: ${decodeURIComponent(fileName)}`;
+
                 loadingSection.classList.add('hidden');
                 mainContent.classList.remove('hidden');
                 initMap();
+
+                // Adiciona todas as áreas ao mapa com cores baseadas no órgão
+                if (environmentalGeoJson && environmentalGeoJson.features.length > 0) {
+                    allAreasLayer = L.geoJSON(environmentalGeoJson, {
+                        style: getStyleByOrgan
+                    }).addTo(map);
+                    map.fitBounds(allAreasLayer.getBounds());
+                }
+                
+                // Adiciona a legenda ao mapa
+                const legend = L.control({position: 'bottomright'});
+                legend.onAdd = function (map) {
+                    const div = L.DomUtil.create('div', 'info legend');
+                    const grades = [
+                        {label: 'Federal', color: '#3498db'},
+                        {label: 'Estadual', color: '#2ecc71'},
+                        {label: 'Municipal', color: '#f1c40f'}
+                    ];
+                    let legendHtml = '<h4>Legenda</h4>';
+                    for (let i = 0; i < grades.length; i++) {
+                        legendHtml += `<i style="background:${grades[i].color}"></i> ${grades[i].label}<br>`;
+                    }
+                    div.innerHTML = legendHtml;
+                    return div;
+                };
+                legend.addTo(map);
+
             } catch (error) {
                 console.error('Erro ao carregar ou processar o ficheiro KMZ:', error);
                 loadingStatus.innerHTML = `<p class="text-red-500 font-semibold">Falha ao carregar dados:</p><p class="text-red-700 mt-2">${error.message}</p><p class="mt-2 text-sm text-gray-600">Verifique se o ficheiro está no GitHub e tente recarregar a página.</p>`;
@@ -231,7 +302,8 @@
                         <p class="mt-2"><strong class="font-semibold text-gray-800">Nome:</strong> ${name}</p>
                         <div class="mt-2"><strong class="font-semibold text-gray-800">Descrição:</strong><div class="mt-1 text-sm text-gray-700 max-h-20 overflow-y-auto">${description}</div></div>
                     </div>`;
-                layersToAdd.push(L.geoJSON(foundEnvironmentalArea.geometry, { style: { color: "#ff7800", weight: 5, opacity: 0.65 } }));
+                // Camada de destaque
+                layersToAdd.push(L.geoJSON(foundEnvironmentalArea.geometry, { style: { color: "#ff7800", weight: 5, opacity: 0.8, fillOpacity: 0.2 } }));
             } else {
                 resultsHTML += `
                     <div class="text-left w-full p-4 bg-gray-100 border border-gray-300 rounded-lg">
