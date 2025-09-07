@@ -19,10 +19,9 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-        /* Estilo para o spinner de carregamento */
         .loader {
-            border: 5px solid #f3f3f3; /* Cinza claro */
-            border-top: 5px solid #3498db; /* Azul */
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -43,18 +42,16 @@
     <div class="w-full max-w-2xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-8">
         <div class="text-center mb-6">
             <h1 class="text-2xl md:text-3xl font-bold text-gray-900">Verificador de Área Ambiental</h1>
-            <p class="text-gray-600 mt-2">Verifique se suas coordenadas estão em uma área de proteção carregada automaticamente.</p>
+            <p class="text-gray-600 mt-2">Verifique se as suas coordenadas estão numa área ambiental carregada.</p>
         </div>
 
-        <!-- Status de Carregamento -->
         <div id="loading-section" class="text-center py-8">
             <div class="flex items-center justify-center">
                 <div class="loader mr-3"></div>
-                <p id="loading-status" class="text-gray-600">Carregando dados das áreas ambientais...</p>
+                <p id="loading-status" class="text-gray-600">A carregar dados de áreas ambientais...</p>
             </div>
         </div>
 
-        <!-- Conteúdo Principal (inicialmente oculto) -->
         <div id="main-content" class="hidden">
             <div class="space-y-4">
                 <div>
@@ -77,24 +74,23 @@
                 </button>
             </div>
 
-            <div id="result" class="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200 min-h-[100px] flex items-center justify-center">
-                <p class="text-gray-500 text-center">O resultado da verificação aparecerá aqui.</p>
+            <div id="result" class="mt-8 space-y-4">
+                 <p class="text-gray-500 text-center">O resultado da verificação aparecerá aqui.</p>
             </div>
             
-            <!-- Container do Mapa -->
             <div id="map" class="mt-6"></div>
         </div>
     </div>
 
     <script>
         // Variáveis globais
-        let geojsonData = null;
+        let environmentalGeoJson = null;
         let map = null;
         let userMarker = null;
-        let areaLayer = null;
+        let areaLayerGroup = null;
 
-        // URL pública do arquivo KMZ via jsDelivr CDN para maior confiabilidade
-        const kmzFileUrl = 'https://cdn.jsdelivr.net/gh/brenderrangel/kmz@main/AREAS_PROTEGIDAS_(V.%2024.2).kmz';
+        // URL do arquivo KMZ atualizado
+        const environmentalKmzUrl = `https://raw.githubusercontent.com/brenderrangel/kmz/main/UCs_VIGENTE_(VERSAO 25.1).kmz?v=${new Date().getTime()}`;
 
         // Elementos da UI
         const loadingSection = document.getElementById('loading-section');
@@ -120,6 +116,7 @@
         }
 
         function isPointInPolygon(point, polygon) {
+            if (!polygon || polygon.length === 0) return false;
             if (!isPointInRing(point, polygon[0])) return false;
             for (let i = 1; i < polygon.length; i++) {
                 if (isPointInRing(point, polygon[i])) return false;
@@ -138,7 +135,6 @@
             }
         }
         
-        // Inicializa o mapa
         function initMap() {
             if (map) return;
             map = L.map('map').setView([-14.235, -51.925], 4);
@@ -147,47 +143,40 @@
             }).addTo(map);
         }
 
-        // Carrega e processa o KMZ da URL
-        async function loadKMZFromURL(url) {
+        async function processKmz(url) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Falha na rede para ${url}: ${response.statusText}`);
+            const arrayBuffer = await response.arrayBuffer();
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            const kmlFile = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.kml'));
+            if (!kmlFile) throw new Error(`Nenhum ficheiro KML encontrado em ${url}.`);
+            const kmlText = await zip.files[kmlFile].async('string');
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(kmlText, 'text/xml');
+            return toGeoJSON.kml(xmlDoc);
+        }
+        
+        async function loadAllData() {
             try {
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Falha na rede: ${response.statusText}`);
-                }
-                const arrayBuffer = await response.arrayBuffer();
-                const zip = await JSZip.loadAsync(arrayBuffer);
-                const kmlFile = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.kml'));
-                if (!kmlFile) throw new Error('Nenhum arquivo KML encontrado no KMZ.');
-                
-                const kmlText = await zip.files[kmlFile].async('string');
-                const parser = new DOMParser();
-                const xmlDoc = parser.parseFromString(kmlText, 'text/xml');
-                geojsonData = toGeoJSON.kml(xmlDoc);
-                
-                if (!geojsonData || !geojsonData.features) {
-                     throw new Error('A conversão para GeoJSON falhou.');
-                }
-
+                environmentalGeoJson = await processKmz(environmentalKmzUrl);
                 loadingSection.classList.add('hidden');
                 mainContent.classList.remove('hidden');
                 initMap();
-
             } catch (error) {
-                console.error('Erro ao carregar ou processar o arquivo KMZ:', error);
-                loadingStatus.innerHTML = `<p class="text-red-500">Falha ao carregar o arquivo da URL. Verifique o link e as permissões de CORS.</p>`;
+                console.error('Erro ao carregar ou processar o ficheiro KMZ:', error);
+                loadingStatus.innerHTML = `<p class="text-red-500 font-semibold">Falha ao carregar dados:</p><p class="text-red-700 mt-2">${error.message}</p><p class="mt-2 text-sm text-gray-600">Verifique se o ficheiro está no GitHub e tente recarregar a página.</p>`;
             }
         }
-
-        // Obtém localização atual
+        
         function getCurrentLocation() {
             if (navigator.geolocation) {
-                resultDiv.innerHTML = `<p class="text-gray-500 text-center">Obtendo sua localização...</p>`;
+                resultDiv.innerHTML = `<p class="text-gray-500 text-center">A obter a sua localização...</p>`;
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
                         const lat = position.coords.latitude;
                         const lon = position.coords.longitude;
-                        latitudeInput.value = lat.toFixed(6);
-                        longitudeInput.value = lon.toFixed(6);
+                        latitudeInput.value = lat.toFixed(7);
+                        longitudeInput.value = lon.toFixed(7);
                         resultDiv.innerHTML = `<p class="text-gray-500 text-center">Localização obtida. Clique em "Verificar".</p>`;
                         if(map) {
                             map.flyTo([lat, lon], 13);
@@ -200,18 +189,17 @@
                         switch (error.code) {
                             case error.PERMISSION_DENIED: errorMessage += "Permissão negada."; break;
                             case error.POSITION_UNAVAILABLE: errorMessage += "Localização indisponível."; break;
-                            case error.TIMEOUT: errorMessage += "A requisição expirou."; break;
+                            case error.TIMEOUT: errorMessage += "O pedido expirou."; break;
                             default: errorMessage += "Ocorreu um erro desconhecido."; break;
                         }
                         resultDiv.innerHTML = `<p class="text-red-500 text-center">${errorMessage}</p>`;
-                    }
+                    }, { enableHighAccuracy: true }
                 );
             } else {
                 resultDiv.innerHTML = `<p class="text-red-500 text-center">Geolocalização não é suportada por este navegador.</p>`;
             }
         }
         
-        // Verifica as coordenadas
         function checkCoordinates() {
             const lat = parseFloat(latitudeInput.value);
             const lon = parseFloat(longitudeInput.value);
@@ -220,39 +208,48 @@
                 resultDiv.innerHTML = `<p class="text-red-500 text-center">Por favor, insira coordenadas válidas.</p>`;
                 return;
             }
-            if (!geojsonData) {
-                resultDiv.innerHTML = `<p class="text-red-500 text-center">Dados do KMZ ainda não foram carregados.</p>`;
+            if (!environmentalGeoJson) {
+                resultDiv.innerHTML = `<p class="text-red-500 text-center">Dados de áreas ambientais não foram carregados corretamente.</p>`;
                 return;
             }
 
             if (userMarker) map.removeLayer(userMarker);
-            if (areaLayer) map.removeLayer(areaLayer);
+            if (areaLayerGroup) map.removeLayer(areaLayerGroup);
 
             const userPoint = [lon, lat];
-            let foundArea = geojsonData.features.find(feature => isPointInFeature(userPoint, feature));
-
-            userMarker = L.marker([lat, lon]).addTo(map)
-                .bindPopup(`<b>Coordenadas:</b><br>Lat: ${lat}<br>Lon: ${lon}`)
-                .openPopup();
-
-            if (foundArea) {
-                const name = foundArea.properties.name || 'Nome não disponível';
-                const description = foundArea.properties.description || 'Sem descrição.';
-                resultDiv.innerHTML = `
+            let resultsHTML = '';
+            let layersToAdd = [];
+            
+            // Verificação da Área Ambiental
+            let foundEnvironmentalArea = environmentalGeoJson.features.find(feature => isPointInFeature(userPoint, feature));
+            if (foundEnvironmentalArea) {
+                const name = foundEnvironmentalArea.properties.name || 'Nome não disponível';
+                const description = foundEnvironmentalArea.properties.description || 'Sem descrição.';
+                resultsHTML += `
                     <div class="text-left w-full p-4 bg-green-100 border border-green-300 rounded-lg">
                         <h3 class="font-bold text-lg text-green-800">✅ DENTRO de Área Ambiental!</h3>
                         <p class="mt-2"><strong class="font-semibold text-gray-800">Nome:</strong> ${name}</p>
-                        <div class="mt-2"><strong class="font-semibold text-gray-800">Descrição:</strong><div class="mt-1 text-sm text-gray-700 max-h-40 overflow-y-auto">${description}</div></div>
+                        <div class="mt-2"><strong class="font-semibold text-gray-800">Descrição:</strong><div class="mt-1 text-sm text-gray-700 max-h-20 overflow-y-auto">${description}</div></div>
                     </div>`;
-                areaLayer = L.geoJSON(foundArea.geometry, { style: { color: "#ff7800", weight: 5, opacity: 0.65 } }).addTo(map);
-                const combinedBounds = areaLayer.getBounds().extend(userMarker.getLatLng());
+                layersToAdd.push(L.geoJSON(foundEnvironmentalArea.geometry, { style: { color: "#ff7800", weight: 5, opacity: 0.65 } }));
+            } else {
+                resultsHTML += `
+                    <div class="text-left w-full p-4 bg-gray-100 border border-gray-300 rounded-lg">
+                        <h3 class="font-bold text-lg text-gray-800">FORA de Área Ambiental.</h3>
+                    </div>`;
+            }
+
+            resultDiv.innerHTML = resultsHTML;
+
+            userMarker = L.marker([lat, lon]).addTo(map)
+                .bindPopup(`<b>As suas Coordenadas</b><br>Lat: ${lat}<br>Lon: ${lon}`)
+                .openPopup();
+            
+            if (layersToAdd.length > 0) {
+                areaLayerGroup = L.featureGroup(layersToAdd).addTo(map);
+                const combinedBounds = areaLayerGroup.getBounds().extend(userMarker.getLatLng());
                 map.flyToBounds(combinedBounds, {padding: [50, 50]});
             } else {
-                resultDiv.innerHTML = `
-                    <div class="text-left w-full p-4 bg-blue-100 border border-blue-300 rounded-lg">
-                        <h3 class="font-bold text-lg text-blue-800">❌ FORA de Área Ambiental.</h3>
-                        <p class="mt-2 text-gray-700">A coordenada informada não se encontra dentro de nenhuma área de proteção registrada no arquivo.</p>
-                    </div>`;
                 map.flyTo([lat, lon], 13);
             }
         }
@@ -261,10 +258,10 @@
         getLocationBtn.addEventListener('click', getCurrentLocation);
         checkBtn.addEventListener('click', checkCoordinates);
         
-        // Inicialização da aplicação
         document.addEventListener('DOMContentLoaded', () => {
-            loadKMZFromURL(kmzFileUrl);
+            loadAllData();
         });
     </script>
 </body>
 </html>
+
