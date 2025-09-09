@@ -4,12 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verificador de Área Ambiental</title>
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS para estilização -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Leaflet CSS e JS -->
+    <!-- JSZip para descompactar arquivos .kmz -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- toGeoJSON para converter KML para GeoJSON -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/togeojson/0.16.0/togeojson.min.js"></script>
+    <!-- Leaflet (biblioteca de mapa) CSS e JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <!-- Google Fonts -->
+    <!-- Google Fonts para uma melhor tipografia -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -32,23 +36,6 @@
             border-radius: 0.5rem;
             border: 1px solid #e5e7eb;
         }
-        .legend {
-            padding: 6px 8px;
-            font: 14px Arial, Helvetica, sans-serif;
-            background: white;
-            background: rgba(255,255,255,0.8);
-            box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            border-radius: 5px;
-            line-height: 18px;
-            color: #555;
-        }
-        .legend i {
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 8px;
-            opacity: 0.9;
-        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen p-4">
@@ -62,7 +49,7 @@
         <div id="loading-section" class="text-center py-8">
             <div class="flex items-center justify-center">
                 <div class="loader mr-3"></div>
-                <p id="loading-status" class="text-gray-600">A carregar dados otimizados de áreas ambientais...</p>
+                <p id="loading-status" class="text-gray-600">A carregar e processar dados das áreas ambientais...</p>
             </div>
         </div>
 
@@ -101,11 +88,10 @@
         let environmentalGeoJson = null;
         let map = null;
         let userMarker = null;
-        let areaLayerGroup = null; 
-        let allAreasLayer = null; 
-
-        // ✅ Arquivo hospedado na Vercel (pasta /public)
-        const geoJsonUrl = "/ucs_vigente.geojson";
+        let areaLayerGroup = null; // Para a área destacada na verificação
+        
+        // URL do arquivo KMZ
+        const kmzUrl = `https://raw.githubusercontent.com/brenderrangel/kmz/main/UCs_VIGENTE_(VERSAO 25.1).kmz`;
 
         // Elementos da UI
         const loadingSection = document.getElementById('loading-section');
@@ -158,67 +144,34 @@
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
         }
-        
-        function getStyleByOrgan(feature) {
-            const desc = feature.properties.description || '';
-            let color = "#95a5a6"; 
 
-            if (desc.includes('UC FEDERAL')) {
-                color = "#3498db"; 
-            } else if (desc.includes('UC ESTADUAL')) {
-                color = "#2ecc71"; 
-            } else if (desc.includes('UC MUNICIPAL')) {
-                color = "#f1c40f"; 
-            }
-            
-            return {
-                color: color,
-                weight: 2,
-                opacity: 0.65,
-                fillOpacity: 0.1
-            };
+        async function processKmz(url) {
+            const response = await fetch(url, { cache: 'no-cache' });
+            if (!response.ok) throw new Error(`Falha na rede para ${url}: ${response.statusText}`);
+            const arrayBuffer = await response.arrayBuffer();
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            const kmlFile = Object.keys(zip.files).find(name => name.toLowerCase().endsWith('.kml'));
+            if (!kmlFile) throw new Error(`Nenhum arquivo KML encontrado em ${url}.`);
+            const kmlText = await zip.files[kmlFile].async('string');
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(kmlText, 'text/xml');
+            return toGeoJSON.kml(xmlDoc);
         }
 
         async function loadAllData() {
             try {
-                const response = await fetch(geoJsonUrl);
-                if (!response.ok) throw new Error(`Falha na rede para ${geoJsonUrl}: ${response.statusText}`);
-                environmentalGeoJson = await response.json();
+                environmentalGeoJson = await processKmz(kmzUrl);
                 
-                const fileName = geoJsonUrl.split('/').pop().split('?')[0];
+                const fileName = kmzUrl.split('/').pop();
                 fileNameEl.textContent = `Arquivo carregado: ${decodeURIComponent(fileName)}`;
 
                 loadingSection.classList.add('hidden');
                 mainContent.classList.remove('hidden');
                 initMap();
 
-                if (environmentalGeoJson && environmentalGeoJson.features.length > 0) {
-                    allAreasLayer = L.geoJSON(environmentalGeoJson, {
-                        style: getStyleByOrgan
-                    }).addTo(map);
-                    map.fitBounds(allAreasLayer.getBounds());
-                }
-                
-                const legend = L.control({position: 'bottomright'});
-                legend.onAdd = function (map) {
-                    const div = L.DomUtil.create('div', 'info legend');
-                    const grades = [
-                        {label: 'Federal', color: '#3498db'},
-                        {label: 'Estadual', color: '#2ecc71'},
-                        {label: 'Municipal', color: '#f1c40f'}
-                    ];
-                    let legendHtml = '<h4>Legenda</h4>';
-                    for (let i = 0; i < grades.length; i++) {
-                        legendHtml += `<i style="background:${grades[i].color}"></i> ${grades[i].label}<br>`;
-                    }
-                    div.innerHTML = legendHtml;
-                    return div;
-                };
-                legend.addTo(map);
-
             } catch (error) {
                 console.error('Erro ao carregar ou processar o ficheiro GeoJSON:', error);
-                loadingStatus.innerHTML = `<p class="text-red-500 font-semibold">Falha ao carregar dados:</p><p class="text-red-700 mt-2">${error.message}</p><p class="mt-2 text-sm text-gray-600">Verifique se o ficheiro 'ucs_vigente.geojson' está na pasta /public da Vercel.</p>`;
+                loadingStatus.innerHTML = `<p class="text-red-500 font-semibold">Falha ao carregar dados:</p><p class="text-red-700 mt-2">${error.message}</p><p class="mt-2 text-sm text-gray-600">Verifique se o ficheiro '${kmzUrl.split('/').pop()}' está no GitHub e tente recarregar a página.</p>`;
             }
         }
         
@@ -274,6 +227,7 @@
             let resultsHTML = '';
             let layersToAdd = [];
             
+            // Verificação da Área Ambiental
             let foundEnvironmentalArea = environmentalGeoJson.features.find(feature => isPointInFeature(userPoint, feature));
             if (foundEnvironmentalArea) {
                 const name = foundEnvironmentalArea.properties.name || 'Nome não disponível';
@@ -284,6 +238,7 @@
                         <p class="mt-2"><strong class="font-semibold text-gray-800">Nome:</strong> ${name}</p>
                         <div class="mt-2"><strong class="font-semibold text-gray-800">Descrição:</strong><div class="mt-1 text-sm text-gray-700 max-h-20 overflow-y-auto">${description}</div></div>
                     </div>`;
+                // Camada de destaque
                 layersToAdd.push(L.geoJSON(foundEnvironmentalArea.geometry, { style: { color: "#ff7800", weight: 5, opacity: 0.8, fillOpacity: 0.2 } }));
             } else {
                 resultsHTML += `
@@ -317,3 +272,4 @@
     </script>
 </body>
 </html>
+
